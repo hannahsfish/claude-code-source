@@ -88,6 +88,10 @@ def fetch(everything=False):
                            (x.get("asset_description") or {}).get("type", "")]
         start += len(res)
         time.sleep(3)
+    if not items:
+        # Steam 限流或抽风时会返回"成功但 0 条"。当成失败处理，否则基准会被清空，
+        # 这一轮把所有挂单报成下架，下一轮又全报成新挂单。
+        raise RuntimeError("Steam 返回了空结果（total_count=%s），这一轮不更新基准" % total)
     if total and len(items) < total * 0.8:
         raise RuntimeError("结果不完整（%d/%d），可能被限流" % (len(items), total))
     return items
