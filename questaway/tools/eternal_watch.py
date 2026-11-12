@@ -27,27 +27,45 @@ SNAP = os.path.join(HERE, "eternal_snapshot.json")
 LOG = os.path.join(HERE, "eternal_log.txt")
 UA = "questaway-eternal-watch/1.0 (personal price monitor)"
 
-# 关注的底材：名字里包含左边的词就打上右边的标记。
+# 关注的底材：名字里包含左边的词就打上右边的标记。目标阵容是刺客、工程师、女巫、治疗师。
+# ★★★ 第一档，★★ 第二档，★ 第三档；目标是 70～80 级的永恒。
 WANT = [
+    # 女巫（轻甲）
     ("Scythe of Curses", "诅咒之镰｜★★★ 女巫武器"),
     ("Cursed Lantern", "诅咒提灯｜★★★ 女巫副手"),
-    ("Spark Signet", "火花印戒｜★★★ 女巫戒指（法系，带冷却）"),
-    ("Sash of Focus", "专注腰带｜★★★ 女巫腰带（冷却+混沌抗性）"),
-    ("Arcane Leggings", "奥术护腿｜★★ 女巫护腿（混沌抗性，竞技场）"),
-    ("Sage Vestment", "贤者长袍｜★★ 女巫护甲（混沌抗性，竞技场）"),
-    ("Mystic Circlet", "秘法头环｜★★ 女巫头盔（混沌抗性，竞技场）"),
-    ("Humming Droplet", "嗡鸣水滴｜★★ 女巫耳环（法系，带冷却）"),
-    ("Channeler Gloves", "导能手套｜★ 女巫手套（冷却+施法）"),
+    ("Spark Signet", "火花印戒｜★★★ 女巫戒指"),
+    ("Sash of Focus", "专注腰带｜★★★ 女巫腰带"),
+    ("Arcane Leggings", "奥术护腿｜★★ 女巫护腿"),
+    ("Sage Vestment", "贤者长袍｜★★ 女巫护甲"),
+    ("Humming Droplet", "嗡鸣水滴｜★★ 女巫耳环"),
     ("Wayfarer Boots", "旅人靴｜★ 女巫鞋子"),
-    ("Sentinel Seal", "哨兵印戒｜✗ 防御戒指，女巫不要；刺客戒指 2 可用"),
-    ("Hammered Hoop", "锻纹耳环｜✗ 重型耳环，女巫不要；刺客可用"),
-    ("Windward Gauntlet", "迎风护手｜武僧副手"),
-    ("Stalker Jerkin", "潜行者皮甲｜中甲护甲（刺客/弓箭手）"),
-    ("Windstep Boots", "风行靴｜中甲鞋子（刺客/弓箭手）"),
-    ("Talisman of the Echoing", "护符：暴击率"),
-    ("Talisman of the Riven", "护符：暴击伤害"),
-    ("Talisman of the Ember", "护符：金币"),
-    ("Talisman of the Swooping", "护符：移速"),
+    ("Crystal Focus", "水晶聚焦｜★ 女巫项链"),
+    ("Arcane Bangle", "奥术手镯｜★ 女巫手镯"),
+    ("Channeler Gloves", "导能手套｜女巫手套，80 级的已经买了"),
+    ("Mystic Circlet", "秘法头环｜女巫头盔，80 级的已经买了"),
+    # 工程师
+    ("Voltaic Wrench", "电击扳手｜★★★ 工程师副手"),
+    ("Hand Cannon", "手持炮｜工程师武器，80 级的已经买了"),
+    # 刺客专用
+    ("Shadow Dirk", "暗影匕首｜★★★ 刺客副手"),
+    ("Viper Fang", "蝮蛇之牙｜★★★ 刺客武器（80～90 级可以直接买）"),
+    # 刺客和工程师共用（中甲系），每种可以买两件
+    ("Featherweight Band", "轻羽指环｜★★★ 戒指（刺客、工程师）"),
+    ("Braided Cord", "编织手绳｜★★★ 手镯（刺客、工程师）"),
+    ("Fang Earring", "獠牙耳环｜★★★ 耳环（刺客、工程师）"),
+    ("Fine Thread", "细丝耳坠｜★★★ 耳环（刺客、工程师）"),
+    ("Quickdraw Gloves", "快枪手套｜★★ 手套（刺客、工程师）"),
+    ("Silent Cord", "静默项绳｜★★ 项链（刺客、工程师）"),
+    ("Fang Necklace", "獠牙项链｜★★ 项链（刺客、工程师）"),
+    ("Studded Cuff", "铆钉护腕｜★★ 手镯（刺客、工程师）"),
+    ("Ring of Precision", "精准之戒｜★★ 戒指（刺客、工程师）"),
+    ("Stalker Jerkin", "潜行者皮甲｜★ 中甲护甲"),
+    ("Hunter's Helm", "猎人头盔｜★ 中甲头盔"),
+    ("Ranger Leggings", "游侠护腿｜★ 中甲护腿"),
+    ("Windstep Boots", "风行靴｜★ 中甲鞋子"),
+    ("Scout's Belt", "斥候腰带｜★ 中甲腰带"),
+    ("Sentinel Seal", "哨兵印戒｜偏防御的戒指，能用但不是首选"),
+    ("Hammered Hoop", "锻纹耳环｜偏防御的耳环，能用但不是首选"),
 ]
 
 
