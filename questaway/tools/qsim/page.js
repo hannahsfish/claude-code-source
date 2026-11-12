@@ -116,6 +116,13 @@
     const h = heroOf(s, p.hero); const t = NS.heroTotals(h); const out = {}; for (const k of p.keys || Object.keys(t)) if (typeof t[k] === 'number') out[k] = t[k]; return out;
   }
 
+  function valid(ops, p) {
+    const s = patched(ops); const h = heroOf(s, p.hero);
+    let r = null; try { r = NS.problemaDaBuild(s, h, { treeNodes: h.treeNodes, abilityRanks: h.abilityRanks, activeSkills: h.activeSkills }); } catch (e) { r = 'ERR ' + String(e).slice(0, 80); }
+    const pts = Object.values(h.abilityRanks || {}).reduce((a, b) => a + b, 0);
+    return { problem: r || null, tree: h.treeNodes.length, treeMax: NS.heroTreePointsAvailable({ ...h, treeNodes: [] }), abil: pts, abilMax: NS.abilityPointsAtLevel(h.level) };
+  }
+
   function info() {
     const g = window.__g; return {
       engine: NS.GAME_VERSION, save: g.version, heroes: g.heroes.map(h => [h.classId, h.level]), stage: [g.difficulty, g.act, g.stage],
@@ -124,5 +131,5 @@
     };
   }
 
-  window.QS = { farm, col, boss, stats, info, patched, makeItem, huntId };
+  window.QS = { farm, col, boss, stats, valid, info, patched, makeItem, huntId };
 })();

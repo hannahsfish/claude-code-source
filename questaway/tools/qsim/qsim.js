@@ -44,6 +44,7 @@ variants.forEach((v, vi) => (job.measures || []).forEach((m, mi) => {
     tasks.push({ vi, mi, fn: 'col', ops, p: { tipo, sample, forca: m.forca ?? D.colForca, dur: m.dur ?? D.colDur, compn: m.compn ?? D.colCompn, preset: m.preset === undefined ? D.colPreset : m.preset, cacada: m.cacada }, cost: 1.5 });
   else if (m.type === 'boss') for (let seed = 1; seed <= (m.n || 10); seed++) tasks.push({ vi, mi, fn: 'boss', ops, p: { act: m.act, seed, preset: m.preset || null }, cost: 0.3 });
   else if (m.type === 'stats') tasks.push({ vi, mi, fn: 'stats', ops, p: { hero: m.hero, keys: m.keys, preset: m.preset || null }, cost: 0.05 });
+  else if (m.type === 'valid') tasks.push({ vi, mi, fn: 'valid', ops, p: { hero: m.hero }, cost: 0.05 });
   else throw new Error('未知测量类型: ' + m.type);
 }));
 for (const t of tasks) { t.key = sha(BASEKEY + t.fn + JSON.stringify(t.ops) + JSON.stringify(t.p)); if (cache.has(t.key)) t.res = cache.get(t.key); }
@@ -90,9 +91,9 @@ const todo = tasks.filter(t => t.res === undefined);
       else if (m.type === 'col') { const by = {}; for (const t of ts) (by[t.p.sample] = by[t.p.sample] || []).push(t.r); const ss = Object.keys(by).sort((a, b) => a - b).filter(k => by[k].length === (m.tipos || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).length);
         rows.push({ name: v.name, xs: ss.map(k => by[k].reduce((a, r) => a + r.dano, 0)), quedas: mean(ss.map(k => by[k].reduce((a, r) => a + r.quedas, 0))), lutaMs: ts.length ? ts[0].r.lutaMs : 0 }); }
       else if (m.type === 'boss') rows.push({ name: v.name, wins: ts.reduce((a, t) => a + t.r.win, 0), n: ts.length, dmg: mean(ts.map(t => t.r.dmg)), secs: mean(ts.map(t => t.r.secs)) });
-      else if (m.type === 'stats') rows.push({ name: v.name, stats: ts[0] ? ts[0].r : {} });
+      else if (m.type === 'stats' || m.type === 'valid') rows.push({ name: v.name, stats: ts[0] ? ts[0].r : {} });
     });
-    const base = rows[0]; const title = m.type === 'farm' ? `刷图 ${m.stage.join('-')}（每人每小时经验，${m.buffs === false ? '不含' : '含'}药水）` : m.type === 'col' ? `巨像（${(m.tipos || []).length || 10} 种合计，强度 ${m.forca ?? D.colForca}，${Math.round((m.dur ?? D.colDur) / 1000)} 秒，同行 ${m.compn ?? D.colCompn} 队，预设 ${m.preset === undefined ? D.colPreset : m.preset || '当前'}）` : m.type === 'boss' ? `首领 ${m.act.join('-')}-10` : `属性 ${m.hero}`;
+    const base = rows[0]; const title = m.type === 'farm' ? `刷图 ${m.stage.join('-')}（每人每小时经验，${m.buffs === false ? '不含' : '含'}药水）` : m.type === 'col' ? `巨像（${(m.tipos || []).length || 10} 种合计，强度 ${m.forca ?? D.colForca}，${Math.round((m.dur ?? D.colDur) / 1000)} 秒，同行 ${m.compn ?? D.colCompn} 队，预设 ${m.preset === undefined ? D.colPreset : m.preset || '当前'}）` : m.type === 'boss' ? `首领 ${m.act.join('-')}-10` : m.type === 'valid' ? `配法校验 ${m.hero}` : `属性 ${m.hero}`;
     console.log('\n== ' + title);
     const o = { type: m.type, title, rows: [] };
     for (const r of rows) {
