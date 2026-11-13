@@ -38,7 +38,7 @@ WANT = [
     ("Arcane Leggings", "奥术护腿｜★★ 女巫护腿"),
     ("Sage Vestment", "贤者长袍｜★★ 女巫护甲"),
     ("Humming Droplet", "嗡鸣水滴｜★★ 女巫耳环"),
-    ("Wayfarer Boots", "旅人靴｜★ 女巫鞋子"),
+    ("Wayfarer Boots", "旅人靴｜女巫鞋子，80 级的已经买了"),
     ("Crystal Focus", "水晶聚焦｜★ 女巫项链"),
     ("Arcane Bangle", "奥术手镯｜★ 女巫手镯"),
     ("Channeler Gloves", "导能手套｜女巫手套，80 级的已经买了"),
