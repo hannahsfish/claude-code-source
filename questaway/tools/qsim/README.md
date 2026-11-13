@@ -47,6 +47,7 @@ node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 | `talisman` / `untalisman` | 镶、拆法阵护符 |
 | `build` | 改天赋点或技能 |
 | `hero` | 用一份完整的英雄数据顶替场上某人（id 和别人重复时自动另起一个） |
+| `order` | 调整站位：`{classes:["priest","thief",...]}`。1 号位挨打最多 |
 | `set` | 通用路径赋值 |
 
 ## 口径和校准

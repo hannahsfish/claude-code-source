@@ -79,6 +79,8 @@
       const used = new Set([...g.heroes.filter((_, j) => j !== i), ...bench, old].map(h => h.id));
       let id = o.hero.id; if (!id || used.has(id)) { id = 'qs_' + o.hero.classId; for (let n = 2; used.has(id); n++) id = 'qs_' + o.hero.classId + n; }
       g.heroes[i] = { ...clone(o.hero), id }; g.bench = [...bench, old]; },
+    order(g, o) { // 调整站位：{classes:['priest','thief','engineer','wizard']}，没列出的排在后面。1 号位挨打最多
+      const rank = c => { const i = o.classes.indexOf(c); return i < 0 ? 99 : i; }; g.heroes = g.heroes.slice().sort((x, y) => rank(x.classId) - rank(y.classId)); },
     set(g, o) { // 通用：{path:['sim','gold'], value:1}
       let t = g; for (const k of o.path.slice(0, -1)) t = t[k]; t[o.path[o.path.length - 1]] = o.value; },
   };
