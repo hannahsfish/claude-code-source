@@ -82,8 +82,8 @@ def fetch(everything=False):
     默认只查装备（名字形如 "Eternal xxx (Lv 80)"），约 2 次请求；
     everything=True 时连护符和符文一起查，约 5 次请求。
     """
-    items, start, total = {}, 0, None
-    while total is None or start < total:
+    items, start, expected, seen = {}, 0, None, 0
+    while expected is None or start < expected:
         q = urllib.parse.urlencode({
             "query": "Eternal" if everything else "Eternal (Lv", "start": start, "count": 100, "search_descriptions": 0,
             "sort_column": "name", "sort_dir": "asc", "appid": APPID, "norender": 1,
@@ -94,14 +94,18 @@ def fetch(everything=False):
             d = json.loads(r.read().decode("utf-8"))
         if not d.get("success"):
             raise RuntimeError("Steam 返回失败")
-        total = d.get("total_count", 0)
+        # 后面的页偶尔会返回 total_count=0，所以应有的条数取各页里见过的最大值，不让它被冲掉
+        expected = max(expected or 0, d.get("total_count") or 0)
         res = d.get("results") or []
         if not res:
             break
+        seen += len(res)
         for x in res:
             name = x["hash_name"]
             if "Eternal" not in name:
                 continue
+            if not everything and "(Lv" not in name:
+                continue  # 只看装备时，模糊搜索带出来的护符、符文不算（和 check_once 的划分一致）
             items[name] = [x["sell_price"] / 100.0, x["sell_listings"],
                            (x.get("asset_description") or {}).get("type", "")]
         start += len(res)
@@ -109,9 +113,10 @@ def fetch(everything=False):
     if not items:
         # Steam 限流或抽风时会返回"成功但 0 条"。当成失败处理，否则基准会被清空，
         # 这一轮把所有挂单报成下架，下一轮又全报成新挂单。
-        raise RuntimeError("Steam 返回了空结果（total_count=%s），这一轮不更新基准" % total)
-    if total and len(items) < total * 0.8:
-        raise RuntimeError("结果不完整（%d/%d），可能被限流" % (len(items), total))
+        raise RuntimeError("Steam 返回了空结果（total_count=%s），这一轮不更新基准" % expected)
+    if seen < expected:
+        # 翻页中途断了（空页、限流）。少一条也不更新基准，否则没读到的会被报成下架，下一轮又报成新挂单。
+        raise RuntimeError("结果不完整（读到 %d 条，应有 %d 条），这一轮不更新基准" % (seen, expected))
     return items
 
 
@@ -155,13 +160,24 @@ def check_once(everything=False):
         return []
     with open(SNAP, encoding="utf-8") as f:
         old = json.load(f)
+    seeded = 0
     if not everything:  # 只比较装备，快照里的护符、符文原样保留
         keep = {n: v for n, v in old.items() if "(Lv" not in n}
         old = {n: v for n, v in old.items() if "(Lv" in n}
         new_full = dict(keep); new_full.update(new)
     else:
         new_full = new
+        if not any("(Lv" not in n for n in old):
+            # 基准是只看装备时记的，还没有护符和符文：第一次带上它们时当作首次记录，不报成新挂单
+            first = {n: v for n, v in new.items() if "(Lv" not in n}
+            if first:
+                old = dict(old); old.update(first); seeded = len(first)
     changes = diff(old, new)
+    if seeded:
+        print("[%s] 首次记录护符和符文 %d 个，不算变化。" % (stamp, seeded))
+        if not changes:
+            with open(SNAP, "w", encoding="utf-8") as f:
+                json.dump(new_full, f, ensure_ascii=False, indent=1)
     if changes:
         with open(SNAP, "w", encoding="utf-8") as f:
             json.dump(new_full, f, ensure_ascii=False, indent=1)

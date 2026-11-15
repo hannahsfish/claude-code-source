@@ -30,7 +30,7 @@ node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 
 预设：`farm` 默认套名为「推图」的预设，`col` 默认套「巨像」，`boss`、`stats` 默认用存档当前配法。
 每个测量都可以写 `"preset": "名字"` 换预设，或写 `"preset": null` 用存档当前配法。
-预设在 `ops` 之后套用，所以用 `build` 改了配法的英雄如果有同名预设，要写 `"preset": null`。
+测量自带的默认预设（巨像用「巨像」、刷图用「推图」）只套给 `ops` 没有动过配法的英雄：被 `preset`、`build`、`hero` 操作指定过配法的英雄保持 `ops` 给的配法，不会被默认预设盖掉。
 某个英雄没有这个名字的预设时沿用存档当前配法，输出里会列出是谁。
 
 `ops`（对存档的修改，只在模拟里生效）：
@@ -38,7 +38,7 @@ node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 | op | 作用 |
 |---|---|
 | `preset` | 切换天赋预设：`{hero:"thief" 或 "*", name:"巨像"}` |
-| `enhance` | 强化：`{hero, slot, level, awake}`，awake 是已唤醒的节点数 |
+| `enhance` | 强化：`{hero, slot, level, awake}`，awake 是已唤醒的节点数；不写就保留原来的唤醒数（不超过这一级的上限） |
 | `item` | 换一件装备：`{hero, slot, base, rarity, level, enchant?, sockets?, enhance?, awake?}`。词条、数值、孔数、附魔数值全部由引擎公式生成；不写 `enchant` 时沿用原来的附魔属性和卷轴阶数 |
 | `gems` / `enchant` | 改宝石、改附魔 |
 | `level` | 改等级 |
@@ -91,9 +91,13 @@ node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 
 **误差**：单场巨像的随机波动约 ±8%，10 种合计后约 ±2.5%，默认 3 个样本后约 ±1%。
 
+巨像样本：不写 `samples` 就是 3 个。写了 `cacada`（指定某一场）时每个样本都是同一场，所以只算 1 个；场次编号 24 个一轮，样本数上限 24。
+涨幅只在基准有同样本号的结果时才给；基准那一边没有可比的样本时显示「基准没有可比的样本」，结果文件里 `delta` 是 `null`。
+
 ## 速度
 
 同样的 57 个方案（每个 4 个刷图种子 + 10 场巨像）：旧脚本 178 秒，qsim 71 秒；重复运行走缓存，0.3 秒。
+缓存文件 `cache.jsonl` 超过 64 MB 时，启动会自动只保留当前存档和引擎的条目。
 
 ## 和旧脚本相比修掉的问题
 

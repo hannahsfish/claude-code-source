@@ -16,11 +16,18 @@
     h.activeSkills = [...p.activeSkills];
     return true;
   }
-  // 给全队套同名预设，返回没有这个预设、沿用存档当前配法的职业。
+  // ops 里明确指定过配法的英雄（preset / build / hero 操作）打上记号，测量自带的默认预设不再覆盖他。
+  const MARK = '__qsBuild';
+  const mark = h => { h[MARK] = true; };
+  const unmarkAll = g => { for (const h of allHeroes(g)) delete h[MARK]; };
+  // 给全队套同名预设，返回没有这个预设、沿用存档当前配法的职业。带记号的英雄跳过。
   function applyPresetAll(s, name) {
-    const miss = []; if (name) for (const h of s.heroes) if (!applyPreset(h, name)) miss.push(h.classId);
+    const miss = []; if (name) for (const h of s.heroes) if (!h[MARK] && !applyPreset(h, name)) miss.push(h.classId);
+    unmarkAll(s);
     return miss;
   }
+  // 某一级强化最多能唤醒几个节点
+  const maxAwake = lv => (NS.APRIMORAR_MARCOS_COM_NUCLEO || [3, 6, 9, 10]).filter(m => m <= lv).length;
 
   // 一件装备的附魔是几阶卷轴：有记录用记录，没有就按数值反推（生成的装备不带这个字段）。
   function enchantTier(it) {
@@ -58,8 +65,9 @@
   }
 
   const OPS = {
-    preset(g, o) { for (const h of g.heroes) if (o.hero === '*' || o.hero === h.classId || (Array.isArray(o.hero) && o.hero.includes(h.classId))) applyPreset(h, o.name); },
-    enhance(g, o) { const it = itemOf(g, o.hero, o.slot); it.enhancement = o.level; it.marcosDespertos = o.awake || 0; delete it.enhancementXp; },
+    preset(g, o) { for (const h of g.heroes) if (o.hero === '*' || o.hero === h.classId || (Array.isArray(o.hero) && o.hero.includes(h.classId))) { if (applyPreset(h, o.name)) mark(h); } },
+    enhance(g, o) { const it = itemOf(g, o.hero, o.slot); it.enhancement = o.level;   // 不写 awake 就保留原来的唤醒数（不超过这一级能唤醒的上限）
+      it.marcosDespertos = Math.min(o.awake !== undefined ? o.awake : (it.marcosDespertos || 0), maxAwake(o.level)); delete it.enhancementXp; },
     item(g, o) { const h = heroOf(g, o.hero); const tpl = h.equipment[o.slot] || { id: 'qs_' + o.slot, slot: o.slot, sockets: [], affixes: [], value: 1, marketable: false }; h.equipment[o.slot] = makeItem(tpl, o); },
     gems(g, o) { const it = itemOf(g, o.hero, o.slot); it.sockets = typeof o.gems === 'string' ? it.sockets.map(() => o.gems) : o.gems; },
     enchant(g, o) { const it = itemOf(g, o.hero, o.slot); const tier = o.tier || 5; it.enchant = { stat: o.stat, value: NS.valorDoPergaminho(o.stat, it.itemLevel, RAR(it.rarity), tier) }; it.enchantScrollTier = tier; },
@@ -68,7 +76,7 @@
     bestiary(g, o) { Object.assign(g.sim.abatesDoBestiario, o.kills); },
     talisman(g, o) { const t = { menores: [], maior: false }; if (o.rarity && o.rarity !== 'eternal') t.raridade = o.rarity; g.circulo.encaixados[String(o.tipo)] = t; },
     untalisman(g, o) { delete g.circulo.encaixados[String(o.tipo)]; },
-    build(g, o) { const h = heroOf(g, o.hero); if (o.treeNodes) h.treeNodes = o.treeNodes; if (o.addNodes) h.treeNodes = [...h.treeNodes, ...o.addNodes]; if (o.abilityRanks) h.abilityRanks = o.abilityRanks; if (o.activeSkills) h.activeSkills = o.activeSkills; },
+    build(g, o) { const h = heroOf(g, o.hero); if (o.treeNodes) h.treeNodes = o.treeNodes; if (o.addNodes) h.treeNodes = [...h.treeNodes, ...o.addNodes]; if (o.abilityRanks) h.abilityRanks = o.abilityRanks; if (o.activeSkills) h.activeSkills = o.activeSkills; mark(h); },
     swap(g, o) { // 把替补换上场：{out:'monk', in:'wizard', level:96}
       const i = g.heroes.findIndex(h => h.classId === o.out), j = (g.bench || []).findIndex(h => h.classId === o.in);
       if (i < 0 || j < 0) throw new Error('swap 找不到英雄'); const a = g.heroes[i], b = g.bench[j]; if (o.level) b.level = o.level; g.heroes[i] = b; g.bench[j] = a; },
@@ -78,7 +86,7 @@
       // id 必须全队唯一：和别人撞了（或没带 id）就另起一个
       const used = new Set([...g.heroes.filter((_, j) => j !== i), ...bench, old].map(h => h.id));
       let id = o.hero.id; if (!id || used.has(id)) { id = 'qs_' + o.hero.classId; for (let n = 2; used.has(id); n++) id = 'qs_' + o.hero.classId + n; }
-      g.heroes[i] = { ...clone(o.hero), id }; g.bench = [...bench, old]; },
+      g.heroes[i] = { ...clone(o.hero), id }; mark(g.heroes[i]); g.bench = [...bench, old]; },
     remove(g, o) { // 让某个英雄下场（放到替补），用来看少了他队伍掉多少：{hero:'engineer'}
       const i = g.heroes.findIndex(h => h.classId === o.hero); if (i < 0) throw new Error('remove 找不到 ' + o.hero);
       g.bench = [...(g.bench || []), g.heroes[i]]; g.heroes = g.heroes.filter((_, j) => j !== i); },
@@ -105,7 +113,7 @@
     const est = Q.est2(s);   // 有人倒地时引擎会像游戏里一样往回退关，s 的关卡可能已经不是请求的那一关
     const at = [s.difficulty, s.act, s.stage], fell = at.join('-') !== p.stage.join('-');
     const kph = est.abatesPorSegundo * 3600;
-    if (!(kph > 0)) return { xp: 0, gold: 0, kph: 0, fight: 0, down: 1, at: at.join('-'), noPreset };   // 打不动
+    if (!(kph > 0)) return { xp: 0, gold: 0, kph: 0, fight: 0, down: 1, at: fell ? at.join('-') : undefined, noPreset };   // 打不动
     const kc = NS.abatesDaFaseEm(null, at[0], at[1], at[2]);   // 过图时间按实际停留的那一关算
     if (!(kc > 0)) throw new Error('取不到这一关的击杀数: ' + at.join('-'));
     const mode = p.buffs === false ? { goldMult: 0, xpMult: 0, dropMult: 0 } : NS.buffEconBonus(s.buffs || []);
@@ -133,8 +141,11 @@
     NS.gameIrAoColosso(s, opts);
     // 同行玩家每场用一份副本，免得引擎改动它们后影响同一页面里的下一场
     const comp = clone((window.__comp || []).slice(0, p.compn ?? 5)); if (comp.length) NS.gameColossoCompanhia(s, comp);
-    let left = rest; while (left > 0 && s.colosso && s.colosso.aqui) { NS.avancarNoColosso(s, Math.min(60000, left), false); left -= 60000; }
-    const k = s.colosso; return { dano: k.dano, quedas: k.quedas, lutaMs: k.lutaMs, tank: k.tankado || 0, noPreset };
+    const snap = () => s.colosso && { dano: s.colosso.dano, quedas: s.colosso.quedas, lutaMs: s.colosso.lutaMs, tank: s.colosso.tankado || 0 };
+    let last = snap();   // 引擎在战斗结束时可能清掉 s.colosso，所以每一步都记下最后一次看到的数字
+    let left = rest; while (left > 0 && s.colosso && s.colosso.aqui) { NS.avancarNoColosso(s, Math.min(60000, left), false); left -= 60000; last = snap() || last; }
+    if (!last) throw new Error('巨像没有留下战斗记录');
+    return { ...last, noPreset };
   }
 
   function boss(ops, p) {
@@ -149,7 +160,7 @@
   }
 
   function valid(ops, p) {
-    const s = patched(ops); const h = heroOf(s, p.hero);
+    const s = patched(ops); unmarkAll(s); const h = heroOf(s, p.hero);
     let r = null; try { r = NS.problemaDaBuild(s, h, { treeNodes: h.treeNodes, abilityRanks: h.abilityRanks, activeSkills: h.activeSkills }); } catch (e) { r = 'ERR ' + String(e).slice(0, 80); }
     const pts = Object.values(h.abilityRanks || {}).reduce((a, b) => a + b, 0);
     return { problem: r || null, tree: h.treeNodes.length, treeMax: NS.heroTreePointsAvailable({ ...h, treeNodes: [] }), abil: pts, abilMax: NS.abilityPointsAtLevel(h.level) };
