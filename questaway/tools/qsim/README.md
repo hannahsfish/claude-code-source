@@ -13,7 +13,7 @@ node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 ```json
 {
   "save": "存档路径",
-  "companions": "cal | real | synth | strong | none | 文件路径",
+  "companions": "cal | real | synth | strong | cal_wz60 | none | 文件路径（脚本目录下有 comp_<名字>.json 的名字都能直接写）",
   "variants": [ { "name": "base", "ops": [] }, { "name": "...", "ops": [ ... ] } ],
   "measures": [
     { "type": "farm", "stage": [2, 10, 7], "seeds": 6 },

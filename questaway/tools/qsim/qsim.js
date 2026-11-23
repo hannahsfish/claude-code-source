@@ -3,7 +3,7 @@
 // 用法：node qsim.js job.json [--workers 4] [--out result.json] [--no-cache] [--quiet]
 // job.json 见 README.md。
 const { chromium } = require('playwright');
-const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const fs = require('fs'), path = require('path'), crypto = require('crypto'), { pathToFileURL } = require('url');
 
 const HERE = __dirname;
 const args = process.argv.slice(2);
@@ -23,7 +23,9 @@ const ENGINE = rel(job.engine || path.join(HERE, 'engine.html'));
 const saveRaw = fs.readFileSync(rel(job.save), 'utf8');
 const game = JSON.parse(JSON.parse(saveRaw).game).game;
 const compName = job.companions === undefined ? 'cal' : job.companions;
-const compFile = compName === 'none' ? null : ['cal', 'real', 'synth', 'strong'].includes(compName) ? path.join(HERE, `comp_${compName}.json`) : rel(compName);
+// 内置口径：脚本目录下有 comp_<名字>.json 就用它（cal、real、synth、strong、cal_wz60 等），否则当作文件路径
+const builtinComp = n => /^[\w-]+$/.test(n) && fs.existsSync(path.join(HERE, `comp_${n}.json`)) ? path.join(HERE, `comp_${n}.json`) : null;
+const compFile = compName === 'none' ? null : (builtinComp(compName) || rel(compName));
 const comp = compFile ? JSON.parse(fs.readFileSync(compFile, 'utf8')) : [];
 const pageLib = fs.readFileSync(path.join(HERE, 'page.js'), 'utf8');
 const st = fs.statSync(ENGINE);
@@ -59,15 +61,17 @@ variants.forEach((v, vi) => (job.measures || []).forEach((m, mi) => {
 for (const t of tasks) { t.key = sha(BASEKEY + t.fn + JSON.stringify(t.ops) + JSON.stringify(t.p)); if (cache.has(t.key)) t.res = cache.get(t.key); }
 const todo = tasks.filter(t => t.res === undefined);
 
+let browser = null;
+const closeCache = () => new Promise(res => { if (!cacheOut || cacheOut.closed || cacheOut.writableEnded) return res(); cacheOut.end(res); });
 (async () => {
   const t0 = Date.now();
   if (todo.length) {
-    const browser = await chromium.launch();
+    browser = await chromium.launch();
     const ctx = await browser.newContext({ offline: true });
     await ctx.route('**/*', r => r.request().url().startsWith('file://') ? r.continue() : r.abort());
     const n = Math.min(W, todo.length);
     const pages = await Promise.all(Array.from({ length: n }, async () => {
-      const p = await ctx.newPage(); await p.goto('file://' + ENGINE, { waitUntil: 'load', timeout: 180000 });
+      const p = await ctx.newPage(); await p.goto(pathToFileURL(ENGINE).href, { waitUntil: 'load', timeout: 180000 });
       await p.waitForFunction(() => window.__NS && window.__QA, null, { timeout: 60000 });
       await p.evaluate(({ g, comp }) => { window.__g = g; window.__comp = comp; }, { g: game, comp });
       await p.evaluate(pageLib); return p;
@@ -84,9 +88,9 @@ const todo = tasks.filter(t => t.res === undefined);
       }
     }));
     if (!QUIET) process.stderr.write(`${process.stderr.isTTY ? '\r' : ''}  ${todo.length} 个任务完成：启动 ${((tInit - t0) / 1000).toFixed(1)}s，计算 ${((Date.now() - tInit) / 1000).toFixed(1)}s，缓存命中 ${tasks.length - todo.length} 个\n`);
-    await browser.close();
+    await browser.close(); browser = null;
   } else if (!QUIET) process.stderr.write(`  全部 ${tasks.length} 个任务来自缓存\n`);
-  if (cacheOut) cacheOut.end();
+  await closeCache();
 
   // ---- 汇总
   const errs = tasks.filter(t => !t.res || !t.res.ok);
@@ -98,6 +102,7 @@ const todo = tasks.filter(t => t.res === undefined);
   const lacks = (vi, mi) => { const n = missing(vi, mi); return n ? `   ⚠ 缺 ${n} 个任务` : ''; };
   const out = { job: path.basename(jobFile), save: job.save, measures: [] };
   const pct = x => (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%';
+  const pm = (e, f) => Number.isFinite(e) ? ' ±' + f(e) : '';   // 只有 1 个样本时没有误差，不打印 ±NaN
   (job.measures || []).forEach((m, mi) => {
     const rows = [], noPreset = new Set();
     variants.forEach((v, vi) => {
@@ -120,9 +125,9 @@ const todo = tasks.filter(t => t.res === undefined);
         const dx = []; for (const [key, x] of r.by) if (base.by.has(key) && base.by.get(key) > 0) dx.push(x / base.by.get(key) - 1);   // 只拿种子（样本号）相同的配对
         const mu = mean(r.xs), e = se(r.xs), d = mean(dx), de = se(dx); const unit = m.type === 'farm' ? 1e6 : 1e9, u = m.type === 'farm' ? 'M' : 'B';
         if (!r.xs.length) { console.log(`${r.name.padEnd(30)} （没有结果）${lacks(r.vi, mi)}`); o.rows.push({ name: r.name, mean: null, n: 0, missing: missing(r.vi, mi) }); continue; }
-        let line = `${r.name.padEnd(30)} ${(mu / unit).toFixed(1).padStart(8)}${u} ±${(e / unit).toFixed(1)}`;
+        let line = `${r.name.padEnd(30)} ${(mu / unit).toFixed(1).padStart(8)}${u}${pm(e, x => (x / unit).toFixed(1))}`;
         const noPair = r !== base && !dx.length;   // 基准没有可配对的样本：不能写成 +0.0%
-        if (r !== base) line += noPair ? '   （基准没有可比的样本）' : `   ${pct(d).padStart(7)} ±${(de * 100).toFixed(1)}`;
+        if (r !== base) line += noPair ? '   （基准没有可比的样本）' : `   ${pct(d).padStart(7)}${pm(de, x => (x * 100).toFixed(1))}`;
         if (m.type === 'farm') { const gx = []; for (const [key, x] of r.gby) if (base.gby.has(key) && base.gby.get(key) > 0) gx.push(x / base.gby.get(key) - 1);   // 金币也只拿同一个种子配对
           line += `   金币 ${(mean(r.gs) / 1e6).toFixed(2)}M${r !== base && gx.length ? ' ' + pct(mean(gx)) : ''}   过图 ${r.fight.toFixed(0)}s${r.down ? '  有人倒地×' + r.down : ''}${r.at.length ? '（退到 ' + r.at.join('、') + '，数字是那一关的）' : ''}`; }
         else line += `   倒地 ${r.quedas.toFixed(0)}`;
@@ -137,4 +142,9 @@ const todo = tasks.filter(t => t.res === undefined);
   const outFile = flag('out', null); if (outFile && outFile !== true) fs.writeFileSync(outFile, JSON.stringify(out, null, 1));
   if (errs.length) console.log(`\n!! 有 ${errs.length} 个任务出错（见开头的列表），退出码 1`);
   if (!QUIET) process.stderr.write(`  总用时 ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
-})().catch(e => { console.error(e); process.exit(1); });
+})().catch(async e => {
+  // 中途出错（页面崩溃、导航超时）：先把已算好的结果写进缓存、关掉浏览器再退出，重跑时不用重算
+  console.error(e); process.exitCode = 1;
+  try { await closeCache(); } catch (_) { }
+  try { if (browser) await browser.close(); } catch (_) { }
+});

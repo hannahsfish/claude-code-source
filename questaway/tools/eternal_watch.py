@@ -82,8 +82,8 @@ def fetch(everything=False):
     默认只查装备（名字形如 "Eternal xxx (Lv 80)"），约 2 次请求；
     everything=True 时连护符和符文一起查，约 5 次请求。
     """
-    items, start, expected, seen = {}, 0, None, 0
-    while expected is None or start < expected:
+    items, start, expected, seen = {}, 0, 0, 0
+    while True:
         q = urllib.parse.urlencode({
             "query": "Eternal" if everything else "Eternal (Lv", "start": start, "count": 100, "search_descriptions": 0,
             "sort_column": "name", "sort_dir": "asc", "appid": APPID, "norender": 1,
@@ -94,11 +94,14 @@ def fetch(everything=False):
             d = json.loads(r.read().decode("utf-8"))
         if not d.get("success"):
             raise RuntimeError("Steam 返回失败")
-        # 后面的页偶尔会返回 total_count=0，所以应有的条数取各页里见过的最大值，不让它被冲掉
-        expected = max(expected or 0, d.get("total_count") or 0)
+        # 任何一页都可能返回 total_count=0，所以应有的条数取各页里见过的最大值，不让它被冲掉
+        expected = max(expected, d.get("total_count") or 0)
         res = d.get("results") or []
         if not res:
             break
+        if not expected:
+            # 有结果却说总数是 0：不知道一共该有几条，没法判断读全了没有。当成失败，不更新基准。
+            raise RuntimeError("Steam 返回了 %d 条结果但 total_count=0，这一轮不更新基准" % len(res))
         seen += len(res)
         for x in res:
             name = x["hash_name"]
@@ -106,9 +109,13 @@ def fetch(everything=False):
                 continue
             if not everything and "(Lv" not in name:
                 continue  # 只看装备时，模糊搜索带出来的护符、符文不算（和 check_once 的划分一致）
+            if not x.get("sell_listings"):
+                continue  # 挂单已经卖完、搜索还带着的条目（价格是 0），按下架处理
             items[name] = [x["sell_price"] / 100.0, x["sell_listings"],
                            (x.get("asset_description") or {}).get("type", "")]
         start += len(res)
+        if start >= expected:
+            break
         time.sleep(3)
     if not items:
         # Steam 限流或抽风时会返回"成功但 0 条"。当成失败处理，否则基准会被清空，
@@ -147,12 +154,21 @@ def beep():
         sys.stdout.flush()
 
 
+META = "_meta"  # 快照里的说明项：{"all": true} 表示护符和符文已经在基准里了（哪怕后来全卖光）
+
+
+def save_snap(items, all_tracked):
+    data = dict(items)
+    data[META] = {"all": bool(all_tracked)}
+    with open(SNAP, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
 def check_once(everything=False):
     new = fetch(everything)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     if not os.path.exists(SNAP):
-        with open(SNAP, "w", encoding="utf-8") as f:
-            json.dump(new, f, ensure_ascii=False, indent=1)
+        save_snap(new, everything)
         print("[%s] 已记录基准：%d 个永恒挂单。" % (stamp, len(new)))
         for n in sorted(new, key=lambda k: new[k][0]):
             if tag(n):
@@ -160,6 +176,12 @@ def check_once(everything=False):
         return []
     with open(SNAP, encoding="utf-8") as f:
         old = json.load(f)
+    meta = old.pop(META, None)
+    if meta is None:
+        # 旧版快照没有说明项：里面有护符/符文就当作已经在监控
+        all_tracked = any("(Lv" not in n for n in old)
+    else:
+        all_tracked = bool(meta.get("all"))
     seeded = 0
     if not everything:  # 只比较装备，快照里的护符、符文原样保留
         keep = {n: v for n, v in old.items() if "(Lv" not in n}
@@ -167,20 +189,18 @@ def check_once(everything=False):
         new_full = dict(keep); new_full.update(new)
     else:
         new_full = new
-        if not any("(Lv" not in n for n in old):
+        if not all_tracked:
             # 基准是只看装备时记的，还没有护符和符文：第一次带上它们时当作首次记录，不报成新挂单
             first = {n: v for n, v in new.items() if "(Lv" not in n}
             if first:
                 old = dict(old); old.update(first); seeded = len(first)
     changes = diff(old, new)
+    tracked_now = all_tracked or everything
     if seeded:
         print("[%s] 首次记录护符和符文 %d 个，不算变化。" % (stamp, seeded))
-        if not changes:
-            with open(SNAP, "w", encoding="utf-8") as f:
-                json.dump(new_full, f, ensure_ascii=False, indent=1)
+    if changes or seeded or tracked_now != all_tracked:
+        save_snap(new_full, tracked_now)
     if changes:
-        with open(SNAP, "w", encoding="utf-8") as f:
-            json.dump(new_full, f, ensure_ascii=False, indent=1)
         with open(LOG, "a", encoding="utf-8") as f:
             for c in changes:
                 f.write("%s %s\n" % (stamp, c))
@@ -212,12 +232,17 @@ def main():
     args = sys.argv[1:]
     everything = "all" in args
     args = [a for a in args if a != "all"]
-    arg = args[0] if args else "300"
+    arg = (args[0] if args else "300").strip().lower()
     if arg == "once":
         if safe_check(everything) is None:
             sys.exit(2)
         return
-    wait = max(120, int(arg))
+    try:
+        wait = max(120, int(arg))
+    except ValueError:
+        print("看不懂参数：%s" % args[0])
+        print(__doc__)
+        sys.exit(2)
     print("每 %d 秒检查一次%s，按 Ctrl+C 停止。" % (wait, "（含护符和符文）" if everything else "（只看装备）"))
     while True:
         safe_check(everything)

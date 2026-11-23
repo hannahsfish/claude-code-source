@@ -49,7 +49,7 @@
     it.affixes = base.affixes.slice(0, R.affixCount).map(stat => ({ stat, value: NS.affixValue(stat, il, R) }));
     it.enhancement = spec.enhance || 0;
     delete it.enhancementXp; delete it.marcosDespertos;
-    if (it.enhancement > 0) it.marcosDespertos = spec.awake || 0;
+    if (it.enhancement > 0) it.marcosDespertos = Math.min(spec.awake || 0, maxAwake(it.enhancement));   // 和 enhance 一样，不超过这一级能唤醒的上限
     // 孔
     const cap = NS.socketCap(it);
     let gems = spec.sockets !== undefined ? spec.sockets : (it.sockets || []);
@@ -68,15 +68,21 @@
     preset(g, o) { for (const h of g.heroes) if (o.hero === '*' || o.hero === h.classId || (Array.isArray(o.hero) && o.hero.includes(h.classId))) { if (applyPreset(h, o.name)) mark(h); } },
     enhance(g, o) { const it = itemOf(g, o.hero, o.slot); it.enhancement = o.level;   // 不写 awake 就保留原来的唤醒数（不超过这一级能唤醒的上限）
       it.marcosDespertos = Math.min(o.awake !== undefined ? o.awake : (it.marcosDespertos || 0), maxAwake(o.level)); delete it.enhancementXp; },
-    item(g, o) { const h = heroOf(g, o.hero); const tpl = h.equipment[o.slot] || { id: 'qs_' + o.slot, slot: o.slot, sockets: [], affixes: [], value: 1, marketable: false }; h.equipment[o.slot] = makeItem(tpl, o); },
-    gems(g, o) { const it = itemOf(g, o.hero, o.slot); it.sockets = typeof o.gems === 'string' ? it.sockets.map(() => o.gems) : o.gems; },
+    item(g, o) { const h = heroOf(g, o.hero); let tpl = h.equipment[o.slot];
+      if (!tpl) {   // 空槽：占位装备的 id 也要全队唯一，否则两个英雄同一槽位会撞 id
+        const used = new Set(); for (const x of allHeroes(g)) for (const e of Object.values(x.equipment || {})) if (e && e.id) used.add(e.id);
+        let id = `qs_${h.classId}_${o.slot}`; for (let n = 2; used.has(id); n++) id = `qs_${h.classId}_${o.slot}_${n}`;
+        tpl = { id, slot: o.slot, sockets: [], affixes: [], value: 1, marketable: false }; }
+      h.equipment[o.slot] = makeItem(tpl, o); },
+    gems(g, o) { const it = itemOf(g, o.hero, o.slot); it.sockets = typeof o.gems === 'string' ? it.sockets.map(() => o.gems) : [...o.gems]; },
     enchant(g, o) { const it = itemOf(g, o.hero, o.slot); const tier = o.tier || 5; it.enchant = { stat: o.stat, value: NS.valorDoPergaminho(o.stat, it.itemLevel, RAR(it.rarity), tier) }; it.enchantScrollTier = tier; },
     level(g, o) { for (const h of allHeroes(g)) if (o.hero === '*' || o.hero === h.classId) h.level = o.level; },
     buff(g, o) { g.buffs = o.id ? [{ id: o.id, msRemaining: 7200000, durationId: '8h' }] : []; },
     bestiary(g, o) { Object.assign(g.sim.abatesDoBestiario, o.kills); },
     talisman(g, o) { const t = { menores: [], maior: false }; if (o.rarity && o.rarity !== 'eternal') t.raridade = o.rarity; g.circulo.encaixados[String(o.tipo)] = t; },
     untalisman(g, o) { delete g.circulo.encaixados[String(o.tipo)]; },
-    build(g, o) { const h = heroOf(g, o.hero); if (o.treeNodes) h.treeNodes = o.treeNodes; if (o.addNodes) h.treeNodes = [...h.treeNodes, ...o.addNodes]; if (o.abilityRanks) h.abilityRanks = o.abilityRanks; if (o.activeSkills) h.activeSkills = o.activeSkills; mark(h); },
+    // op 里的数组、对象一律复制后再放进存档：同一方案的多个任务共用一份 ops，引擎原地修改时不能串到下一个任务
+    build(g, o) { const h = heroOf(g, o.hero); if (o.treeNodes) h.treeNodes = [...o.treeNodes]; if (o.addNodes) h.treeNodes = [...h.treeNodes, ...o.addNodes]; if (o.abilityRanks) h.abilityRanks = { ...o.abilityRanks }; if (o.activeSkills) h.activeSkills = [...o.activeSkills]; mark(h); },
     swap(g, o) { // 把替补换上场：{out:'monk', in:'wizard', level:96}
       const i = g.heroes.findIndex(h => h.classId === o.out), j = (g.bench || []).findIndex(h => h.classId === o.in);
       if (i < 0 || j < 0) throw new Error('swap 找不到英雄'); const a = g.heroes[i], b = g.bench[j]; if (o.level) b.level = o.level; g.heroes[i] = b; g.bench[j] = a; },
@@ -93,7 +99,7 @@
     order(g, o) { // 调整站位：{classes:['priest','thief','engineer','wizard']}，没列出的排在后面。1 号位挨打最多
       const rank = c => { const i = o.classes.indexOf(c); return i < 0 ? 99 : i; }; g.heroes = g.heroes.slice().sort((x, y) => rank(x.classId) - rank(y.classId)); },
     set(g, o) { // 通用：{path:['sim','gold'], value:1}
-      let t = g; for (const k of o.path.slice(0, -1)) t = t[k]; t[o.path[o.path.length - 1]] = o.value; },
+      let t = g; for (const k of o.path.slice(0, -1)) t = t[k]; t[o.path[o.path.length - 1]] = (o.value !== null && typeof o.value === 'object') ? clone(o.value) : o.value; },
   };
 
   function patched(ops) {
