@@ -1,0 +1,7 @@
+__pycache__/
+eternal_snapshot.json
+eternal_log.txt
+# qsim 运行时产生或需要的文件：引擎页面来自游戏本体，同行玩家数据来自真实存档，都不进仓库
+qsim/engine.html
+qsim/comp_*.json
+qsim/cache.jsonl

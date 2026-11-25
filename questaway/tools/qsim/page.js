@@ -1,0 +1,237 @@
+// qsim 页面内库：在游戏引擎页面里运行，只依赖引擎自己的函数。
+// window.__NS 是引擎的具名导出表；window.__QA 里只用到一个没有具名导出的函数（est2）。
+(() => {
+  const NS = window.__NS, Q = window.__QA || {};
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const allHeroes = g => [...g.heroes, ...(g.bench || [])];
+  const heroOf = (g, cls) => { const h = allHeroes(g).find(h => h.classId === cls); if (!h) throw new Error('没有这个职业: ' + cls); return h; };
+  const RAR = r => NS.rarityById(r);
+  const itemOf = (g, cls, slot) => { const it = heroOf(g, cls).equipment[slot]; if (!it) throw new Error(`这个部位没有装备: ${cls}.${slot}`); return it; };
+
+  function applyPreset(h, name) {
+    const p = (h.buildPresets || []).find(p => p && p.name === name);
+    if (!p) return false;
+    h.treeNodes = [...p.treeNodes];
+    if (p.abilityRanks) h.abilityRanks = { ...p.abilityRanks };
+    h.activeSkills = [...p.activeSkills];
+    return true;
+  }
+  // ops 里明确指定过配法的英雄（preset / build / hero 操作）打上记号，测量自带的默认预设不再覆盖他。
+  const MARK = '__qsBuild';
+  const mark = h => { h[MARK] = true; };
+  const unmarkAll = g => { for (const h of allHeroes(g)) delete h[MARK]; };
+  // 给全队套同名预设，返回没有这个预设、沿用存档当前配法的职业。带记号的英雄跳过。
+  function applyPresetAll(s, name) {
+    const miss = []; if (name) for (const h of s.heroes) if (!h[MARK] && !applyPreset(h, name)) miss.push(h.classId);
+    unmarkAll(s);
+    return miss;
+  }
+  // 某一级强化最多能唤醒几个节点
+  const maxAwake = lv => (NS.APRIMORAR_MARCOS_COM_NUCLEO || [3, 6, 9, 10]).filter(m => m <= lv).length;
+
+  // 一件装备的附魔是几阶卷轴：有记录用记录，没有就按数值反推（生成的装备不带这个字段）。
+  function enchantTier(it) {
+    if (!it.enchant) return null;
+    if (it.enchantScrollTier) return it.enchantScrollTier;
+    const R = RAR(it.rarity); let best = 5, err = Infinity;
+    for (let t = 1; t <= 5; t++) { const e = Math.abs(NS.valorDoPergaminho(it.enchant.stat, it.itemLevel, R, t) - it.enchant.value); if (e < err) { err = e; best = t; } }
+    return best;
+  }
+
+  // 用引擎自己的公式生成一件装备：词条取底材的前 N 条，数值、孔数、附魔都由引擎算。
+  function makeItem(tpl, spec) {
+    const it = clone(tpl), tplTier = enchantTier(tpl);
+    const baseId = spec.base || it.baseType;
+    const base = NS.catalogBaseById(baseId);
+    if (!base) throw new Error('没有这个底材: ' + baseId);
+    const rarity = spec.rarity || it.rarity, il = spec.level || it.itemLevel, R = RAR(rarity);
+    it.baseType = baseId; it.rarity = rarity; it.itemLevel = il;
+    it.affixes = base.affixes.slice(0, R.affixCount).map(stat => ({ stat, value: NS.affixValue(stat, il, R) }));
+    it.enhancement = spec.enhance || 0;
+    delete it.enhancementXp; delete it.marcosDespertos;
+    if (it.enhancement > 0) it.marcosDespertos = Math.min(spec.awake || 0, maxAwake(it.enhancement));   // 和 enhance 一样，不超过这一级能唤醒的上限
+    // 孔
+    const cap = NS.socketCap(it);
+    let gems = spec.sockets !== undefined ? spec.sockets : (it.sockets || []);
+    if (typeof gems === 'string') gems = Array(cap).fill(gems);
+    gems = gems.slice(0, cap); while (gems.length < cap) gems.push(spec.sockets === undefined && gems.length ? gems[gems.length - 1] : null);
+    it.sockets = gems;
+    // 附魔：数值跟装备等级、品质、卷轴阶数走。没指定时沿用模板原来的属性和阶数，不顺手升阶。
+    let en = spec.enchant !== undefined ? spec.enchant : (it.enchant ? { stat: it.enchant.stat, tier: tplTier } : null);
+    if (it.infusao && spec.enchant === undefined) en = null;
+    if (en) { const tier = en.tier || 5; it.enchant = { stat: en.stat, value: NS.valorDoPergaminho(en.stat, il, R, tier) }; it.enchantScrollTier = tier; }
+    else { delete it.enchant; delete it.enchantScrollTier; }
+    return it;
+  }
+
+  const OPS = {
+    preset(g, o) { for (const h of g.heroes) if (o.hero === '*' || o.hero === h.classId || (Array.isArray(o.hero) && o.hero.includes(h.classId))) { if (applyPreset(h, o.name)) mark(h); } },
+    enhance(g, o) { const it = itemOf(g, o.hero, o.slot); it.enhancement = o.level;   // 不写 awake 就保留原来的唤醒数（不超过这一级能唤醒的上限）
+      it.marcosDespertos = Math.min(o.awake !== undefined ? o.awake : (it.marcosDespertos || 0), maxAwake(o.level)); delete it.enhancementXp; },
+    item(g, o) { const h = heroOf(g, o.hero); let tpl = h.equipment[o.slot];
+      if (!tpl) {   // 空槽：占位装备的 id 也要全队唯一，否则两个英雄同一槽位会撞 id
+        const used = new Set(); for (const x of allHeroes(g)) for (const e of Object.values(x.equipment || {})) if (e && e.id) used.add(e.id);
+        let id = `qs_${h.classId}_${o.slot}`; for (let n = 2; used.has(id); n++) id = `qs_${h.classId}_${o.slot}_${n}`;
+        tpl = { id, slot: o.slot, sockets: [], affixes: [], value: 1, marketable: false }; }
+      h.equipment[o.slot] = makeItem(tpl, o); },
+    gems(g, o) { const it = itemOf(g, o.hero, o.slot); it.sockets = typeof o.gems === 'string' ? it.sockets.map(() => o.gems) : [...o.gems]; },
+    enchant(g, o) { const it = itemOf(g, o.hero, o.slot); const tier = o.tier || 5; it.enchant = { stat: o.stat, value: NS.valorDoPergaminho(o.stat, it.itemLevel, RAR(it.rarity), tier) }; it.enchantScrollTier = tier; },
+    level(g, o) { for (const h of allHeroes(g)) if (o.hero === '*' || o.hero === h.classId) h.level = o.level; },
+    buff(g, o) { g.buffs = o.id ? [{ id: o.id, msRemaining: 7200000, durationId: '8h' }] : []; },
+    bestiary(g, o) { Object.assign(g.sim.abatesDoBestiario, o.kills); },
+    talisman(g, o) { const t = { menores: [], maior: false }; if (o.rarity && o.rarity !== 'eternal') t.raridade = o.rarity; g.circulo.encaixados[String(o.tipo)] = t; },
+    untalisman(g, o) { delete g.circulo.encaixados[String(o.tipo)]; },
+    // op 里的数组、对象一律复制后再放进存档：同一方案的多个任务共用一份 ops，引擎原地修改时不能串到下一个任务
+    build(g, o) { const h = heroOf(g, o.hero); if (o.treeNodes) h.treeNodes = [...o.treeNodes]; if (o.addNodes) h.treeNodes = [...h.treeNodes, ...o.addNodes]; if (o.abilityRanks) h.abilityRanks = { ...o.abilityRanks }; if (o.activeSkills) h.activeSkills = [...o.activeSkills]; mark(h); },
+    swap(g, o) { // 把替补换上场：{out:'monk', in:'wizard', level:96}
+      const i = g.heroes.findIndex(h => h.classId === o.out), j = (g.bench || []).findIndex(h => h.classId === o.in);
+      if (i < 0 || j < 0) throw new Error('swap 找不到英雄'); const a = g.heroes[i], b = g.bench[j]; if (o.level) b.level = o.level; g.heroes[i] = b; g.bench[j] = a; },
+    hero(g, o) { // 用一份完整的英雄数据顶替场上某人：{out:'monk', hero:{...}}
+      const i = g.heroes.findIndex(h => h.classId === o.out); if (i < 0) throw new Error('hero 找不到 ' + o.out);
+      const old = g.heroes[i], bench = (g.bench || []).filter(h => h.classId !== o.hero.classId);
+      // id 必须全队唯一：和别人撞了（或没带 id）就另起一个
+      const used = new Set([...g.heroes.filter((_, j) => j !== i), ...bench, old].map(h => h.id));
+      let id = o.hero.id; if (!id || used.has(id)) { id = 'qs_' + o.hero.classId; for (let n = 2; used.has(id); n++) id = 'qs_' + o.hero.classId + n; }
+      g.heroes[i] = { ...clone(o.hero), id }; mark(g.heroes[i]); g.bench = [...bench, old]; },
+    remove(g, o) { // 让某个英雄下场（放到替补），用来看少了他队伍掉多少：{hero:'engineer'}
+      const i = g.heroes.findIndex(h => h.classId === o.hero); if (i < 0) throw new Error('remove 找不到 ' + o.hero);
+      g.bench = [...(g.bench || []), g.heroes[i]]; g.heroes = g.heroes.filter((_, j) => j !== i); },
+    order(g, o) { // 调整站位：{classes:['priest','thief','engineer','wizard']}，没列出的排在后面。1 号位挨打最多
+      const rank = c => { const i = o.classes.indexOf(c); return i < 0 ? 99 : i; }; g.heroes = g.heroes.slice().sort((x, y) => rank(x.classId) - rank(y.classId)); },
+    set(g, o) { // 通用：{path:['sim','gold'], value:1}
+      let t = g; for (const k of o.path.slice(0, -1)) t = t[k]; t[o.path[o.path.length - 1]] = (o.value !== null && typeof o.value === 'object') ? clone(o.value) : o.value; },
+    // 塔宠物（从塔里宝箱的蛋孵出的）：收藏列表 petState.fixados 里的全部生效、效果叠加，没有栏位上限。
+    // {set:[...]} 换成这份列表；{add:[...]} / {drop:[...]} 在现有收藏上加减
+    pets(g, o) { const ps = g.petState = g.petState || {}; let l = o.set ? [...o.set] : [...(ps.fixados || [])];
+      for (const id of o.add || []) if (!l.includes(id)) l.push(id);
+      if (o.drop) l = l.filter(id => !o.drop.includes(id));
+      ps.fixados = l.sort(); },
+  };
+
+  function patched(ops) {
+    const g = clone(window.__g);
+    for (const o of ops || []) { const f = OPS[o.op]; if (!f) throw new Error('未知操作: ' + o.op); f(g, o); }
+    return g;
+  }
+  const idle = g => { delete g.luta; delete g.lutaDaFase; if (g.colosso) delete g.colosso.aqui; return g; };
+
+  // 刷图：一个种子跑 10 分钟。buffs=true 时把药水（洞察等）算进去。
+  function farm(ops, p) {
+    const s = idle(patched(ops)); const [d, a, st] = p.stage; s.difficulty = d; s.act = a; s.stage = st;
+    const noPreset = applyPresetAll(s, p.preset);
+    const lv0 = s.heroes.map(h => h.level), grau0 = s.heroes.map(h => h.xpDoGrau || 0);
+    for (const h of s.heroes) h.xp = 0; s.sim.kills = 1000 + p.seed * 7919;
+    const g0 = s.sim.gold, MS = 600000;
+    const est = Q.est2(s);   // 有人倒地时引擎会像游戏里一样往回退关，s 的关卡可能已经不是请求的那一关
+    const at = [s.difficulty, s.act, s.stage], fell = at.join('-') !== p.stage.join('-');
+    const kph = est.abatesPorSegundo * 3600;
+    if (!(kph > 0)) return { xp: 0, gold: 0, kph: 0, fight: 0, down: 1, at: fell ? at.join('-') : undefined, noPreset };   // 打不动
+    const kc = NS.abatesDaFaseEm(null, at[0], at[1], at[2]);   // 过图时间按实际停留的那一关算
+    if (!(kc > 0)) throw new Error('取不到这一关的击杀数: ' + at.join('-'));
+    const mode = p.buffs === false ? { goldMult: 0, xpMult: 0, dropMult: 0 } : NS.buffEconBonus(s.buffs || []);
+    const c = NS.currentEncounterParams(s, mode);
+    const hv = est.todosDePe && c.heroisVivos ? { heroisVivos: c.heroisVivos.map(() => true) } : {};
+    NS.catchUpOffline(s.sim, MS, { ...c, ...hv, killsPerTick: est.abatesPorSegundo * c.msPerTick / 1000, xpPerKill: c.xpPerKill * (1 + est.xpDoExcedente) },
+      { capMs: MS, goldEfficiency: 1, xpEfficiency: 1 }, s.heroes);
+    const fight = kc / kph * 3600, real = fight + (p.overhead ?? 4), k = fight / real;
+    // 这 10 分钟里升了级的英雄，把跨过的每一级所需经验加回来；满级后经验进升华（xpDoGrau），也算进来
+    const xpEach = s.heroes.map((h, i) => { let x = h.xp + ((h.xpDoGrau || 0) - grau0[i]); for (let L = lv0[i]; L < h.level; L++) x += NS.xpToNext(L); return x * 6 * k; });
+    return { xp: xpEach.reduce((x, y) => x + y, 0) / xpEach.length, gold: (s.sim.gold - g0) * 6 * k, kph, fight, down: est.todosDePe && !fell ? 0 : 1, at: fell ? at.join('-') : undefined, noPreset };
+  }
+
+  // 巨像：一种类型打一场。cacada 决定随机种子，同一个 tipo 在日期上每 10 天轮一次。
+  const DAY_OF_TYPE = [3, 4, 5, 6, 7, 8, 9, 10, 1, 2];
+  const HOURS = ['01', '03', '05', '07', '09', '11', '13', '15', '17', '19', '21', '23'];
+  function huntId(tipo, sample) { const day = DAY_OF_TYPE[tipo - 1] + 10 * (Math.floor(sample / 12) % 2); return `2026-11-${String(day).padStart(2, '0')}T${HOURS[sample % 12]}`; }
+  function col(ops, p) {
+    const s = patched(ops); delete s.colosso; delete s.luta; delete s.lutaDaFase;
+    const noPreset = applyPresetAll(s, p.preset);
+    const id = p.cacada || huntId(p.tipo, p.sample || 0);
+    const rest = p.dur + 10000; const opts = { cacada: id, tipo: p.tipo, restanteMs: rest, faltaMs: 0 };
+    if (p.forca && p.forca !== 1000) opts.forca = p.forca;
+    const bad = NS.porQueNaoVaiAoColosso(s, opts); if (bad) throw new Error('巨像进不去: ' + bad);
+    NS.gameIrAoColosso(s, opts);
+    // 同行玩家每场用一份副本，免得引擎改动它们后影响同一页面里的下一场
+    const comp = clone((window.__comp || []).slice(0, p.compn ?? 5)); if (comp.length) NS.gameColossoCompanhia(s, comp);
+    const snap = () => s.colosso && { dano: s.colosso.dano, quedas: s.colosso.quedas, lutaMs: s.colosso.lutaMs, tank: s.colosso.tankado || 0 };
+    let last = snap();   // 引擎在战斗结束时可能清掉 s.colosso，所以每一步都记下最后一次看到的数字
+    let left = rest; while (left > 0 && s.colosso && s.colosso.aqui) { NS.avancarNoColosso(s, Math.min(60000, left), false); left -= 60000; last = snap() || last; }
+    if (!last) throw new Error('巨像没有留下战斗记录');
+    return { ...last, noPreset };
+  }
+
+  function boss(ops, p) {
+    const s = idle(patched(ops)); const [d, a] = p.act; s.difficulty = d; s.act = a; s.stage = 10;
+    const noPreset = applyPresetAll(s, p.preset);
+    const x = NS.ensaioDoChefao(s, 1800000, p.seed); return { win: x.vence ? 1 : 0, dmg: x.tirada, secs: x.segundos, noPreset };
+  }
+
+  function stats(ops, p) {
+    const s = patched(ops); applyPresetAll(s, p.preset);
+    const h = heroOf(s, p.hero); const t = NS.heroTotals(h); const out = {}; for (const k of p.keys || Object.keys(t)) if (typeof t[k] === 'number') out[k] = t[k]; return out;
+  }
+
+  function valid(ops, p) {
+    const s = patched(ops); unmarkAll(s); const h = heroOf(s, p.hero);
+    let r = null; try { r = NS.problemaDaBuild(s, h, { treeNodes: h.treeNodes, abilityRanks: h.abilityRanks, activeSkills: h.activeSkills }); } catch (e) { r = 'ERR ' + String(e).slice(0, 80); }
+    const pts = Object.values(h.abilityRanks || {}).reduce((a, b) => a + b, 0);
+    return { problem: r || null, tree: h.treeNodes.length, treeMax: NS.heroTreePointsAvailable({ ...h, treeNodes: [] }), abil: pts, abilMax: NS.abilityPointsAtLevel(h.level) };
+  }
+
+  // 塔：用游戏自己的自动爬塔（piloto），只推进时间。
+  // p.andar 不给 = 沿用存档里塔的当前位置；给了就从该层（外围用负数）重新进塔，p.unlock=true 时先把纪录解锁到该层。
+  // 每 10 秒推进一次，记录过了几个房间、倒了几次、倒在哪、最远到哪，以及 1 号英雄的升华经验和金币增量。
+  function tower(ops, p) {
+    const s = patched(ops); delete s.luta; delete s.lutaDaFase; if (s.colosso) delete s.colosso.aqui;
+    const noPreset = applyPresetAll(s, p.preset);
+    s.sim.elapsedMs += (p.seed || 0) * 3600000 * 7;   // 换种子：把时钟往后挪，房间、掉落的随机数跟着变
+    if (p.andar !== undefined && p.andar !== null) {
+      s.torre = s.torre || { recorde: 0 }; delete s.torre.aqui; delete s.torre.pausada;
+      s.torre.corridas = (s.torre.corridas || 0) + (p.seed || 0);   // 塔的地图种子 = 玩家 id + 第几趟，不跟时钟走
+      if (p.unlock) { s.torre.recorde = Math.max(s.torre.recorde || 0, p.andar); s.torre.entornoVencido = 95; }
+      const why = NS.porQueNaoVaiATorre(s, p.andar); if (why) throw new Error('塔进不去: ' + why);
+      // 遗物：放进 5×4 的格子（按顺序找第一个放得下的位置），账号里要有这么多件
+      const grade = [], used = new Set();
+      for (const id of p.reliquias || []) {
+        const d = NS.RELIQUIAS_DA_TORRE.find(r => r.id === id); if (!d) throw new Error('没有这个遗物: ' + id);
+        let ok = false;
+        for (let y = 0; y + d.h <= 4 && !ok; y++) for (let x = 0; x + d.w <= 5 && !ok; x++) {
+          const cells = []; for (let i = x; i < x + d.w; i++) for (let j = y; j < y + d.h; j++) cells.push(j * 5 + i);
+          if (cells.every(c => !used.has(c))) { cells.forEach(c => used.add(c)); grade.push({ chave: id, x, y }); ok = true; }
+        }
+        if (!ok) throw new Error('格子放不下: ' + id);
+      }
+      // 每个房间的「请求」按上限填满：升华和遗物只通过它生效（经验、金币、英雄加成、更多怪）。
+      // 游戏界面进塔时默认就是填满的（存档里的 pedido 等于上限），不传就等于全都不生效。
+      const teto = NS.tetoDoDesafio({ ...s, torre: { ...s.torre, reliquias: grade.map(g => ({ id: g.chave, x: g.x, y: g.y })) } });
+      const nz = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
+      const vz = nz(teto.vezes), ms = nz(teto.mais), herois = {};
+      if (Object.keys(vz).length) herois.vezes = vz; if (Object.keys(ms).length) herois.mais = ms;
+      const desafio = { ...(Object.keys(herois).length ? { herois } : {}), ...nz({ xp: teto.xp, ouro: teto.ouro, maisBichos: teto.maisBichos, danoEmChefao: teto.danoEmChefao, niveisDoChefao: p.chefao ? teto.niveisDoChefao : 0 }) };
+      NS.gameIrATorre(s, p.andar, { desafio, ...(grade.length ? { reliquias: grade } : {}) });
+    }
+    if (!s.torre || !s.torre.aqui) throw new Error('存档不在塔里，需要给 andar');
+    NS.gamePilotoDaTorre(s, p.modo || 'subir', p.aoCair || 'recuar');
+    const xp0 = s.heroes.map(h => h.xpDoGrau || 0), g0 = s.sim.gold, a0 = s.torre.aqui;
+    const start = [a0.andar, a0.camada], quedas = []; let salas = 0, last = null, maxKey = a0.andar * 100 + a0.camada;
+    for (let ms = 0; ms < p.ms; ms += 10000) {
+      const a = s.torre.aqui; if (!a) break;
+      const k = a.andar + '/' + a.camada + (a.venceu ? 'V' : '') + (a.caiu ? 'X' : '');
+      if (k !== last) { if (a.caiu) quedas.push(a.andar + '/' + a.camada); if (a.venceu) salas++; last = k; }
+      maxKey = Math.max(maxKey, a.andar * 100 + a.camada);
+      NS.avancarNaTorre(s, 10000);
+    }
+    const a = s.torre.aqui || {}, xp = s.heroes.map((h, i) => (h.xpDoGrau || 0) - xp0[i]);
+    return { pedido: a0.pedido, start, fim: [a.andar, a.camada], max: [Math.floor(maxKey / 100), maxKey % 100], salas, quedas, xp: xp.reduce((x, y) => x + y, 0) / xp.length, gold: s.sim.gold - g0, noPreset };
+  }
+
+  function info() {
+    const g = window.__g; return {
+      engine: NS.GAME_VERSION, save: g.version, heroes: g.heroes.map(h => [h.classId, h.level]), stage: [g.difficulty, g.act, g.stage],
+      buffs: (g.buffs || []).map(b => b.id), presets: g.heroes.map(h => [h.classId, (h.buildPresets || []).filter(Boolean).map(p => p.name)]),
+      colosso: g.colosso ? { cacada: g.colosso.cacada, tipo: g.colosso.tipo, dano: g.colosso.dano, lutaMs: g.colosso.lutaMs, forca: g.colosso.forca, quedas: g.colosso.quedas, companhia: g.colosso.aqui?.companhia?.length ?? null } : null,
+    };
+  }
+
+  window.QS = { farm, col, boss, stats, valid, tower, info, patched, makeItem, huntId };
+})();

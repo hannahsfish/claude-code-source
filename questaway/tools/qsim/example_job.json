@@ -1,0 +1,14 @@
+{
+  "save": "../../savedata/save.json",
+  "companions": "cal",
+  "variants": [
+    { "name": "base", "ops": [] },
+    { "name": "刺客副手 +3 唤醒", "ops": [ { "op": "enhance", "hero": "thief", "slot": "offhand", "level": 3, "awake": 1 } ] },
+    { "name": "刺客戒指2 换永恒轻羽指环 80", "ops": [ { "op": "item", "hero": "thief", "slot": "ring2", "base": "jwl_ring_med", "rarity": "eternal", "level": 80 } ] }
+  ],
+  "measures": [
+    { "type": "farm", "stage": [2, 10, 7], "seeds": 6 },
+    { "type": "col", "samples": 3 },
+    { "type": "boss", "act": [2, 10], "n": 10, "preset": "巨像" }
+  ]
+}
