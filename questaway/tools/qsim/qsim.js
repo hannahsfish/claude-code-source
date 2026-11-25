@@ -57,7 +57,7 @@ variants.forEach((v, vi) => (job.measures || []).forEach((m, mi) => {
   else if (m.type === 'stats') tasks.push({ vi, mi, fn: 'stats', ops, p: { hero: m.hero, keys: m.keys, preset: m.preset || null }, cost: 0.05 });
   else if (m.type === 'valid') tasks.push({ vi, mi, fn: 'valid', ops, p: { hero: m.hero }, cost: 0.05 });
   else if (m.type === 'tower') for (const andar of (m.andares || [null])) for (let seed = 0; seed < (m.seeds || 4); seed++)
-    tasks.push({ vi, mi, fn: 'tower', ops, p: { andar, seed, unlock: m.unlock, modo: m.modo, aoCair: m.aoCair, ms: m.ms || 3600000, preset: m.preset === undefined ? null : m.preset }, cost: 0.5 * (m.ms || 3600000) / 3600000 });
+    tasks.push({ vi, mi, fn: 'tower', ops, p: { andar, seed, unlock: m.unlock, reliquias: m.reliquias, chefao: m.chefao, modo: m.modo, aoCair: m.aoCair, ms: m.ms || 3600000, preset: m.preset === undefined ? null : m.preset }, cost: 0.5 * (m.ms || 3600000) / 3600000 });
   else throw new Error('未知测量类型: ' + m.type);
 }));
 for (const t of tasks) { t.key = sha(BASEKEY + t.fn + JSON.stringify(t.ops) + JSON.stringify(t.p)); if (cache.has(t.key)) t.res = cache.get(t.key); }

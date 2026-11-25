@@ -187,9 +187,28 @@
     s.sim.elapsedMs += (p.seed || 0) * 3600000 * 7;   // 换种子：把时钟往后挪，房间、掉落的随机数跟着变
     if (p.andar !== undefined && p.andar !== null) {
       s.torre = s.torre || { recorde: 0 }; delete s.torre.aqui; delete s.torre.pausada;
+      s.torre.corridas = (s.torre.corridas || 0) + (p.seed || 0);   // 塔的地图种子 = 玩家 id + 第几趟，不跟时钟走
       if (p.unlock) { s.torre.recorde = Math.max(s.torre.recorde || 0, p.andar); s.torre.entornoVencido = 95; }
       const why = NS.porQueNaoVaiATorre(s, p.andar); if (why) throw new Error('塔进不去: ' + why);
-      NS.gameIrATorre(s, p.andar, {});
+      // 遗物：放进 5×4 的格子（按顺序找第一个放得下的位置），账号里要有这么多件
+      const grade = [], used = new Set();
+      for (const id of p.reliquias || []) {
+        const d = NS.RELIQUIAS_DA_TORRE.find(r => r.id === id); if (!d) throw new Error('没有这个遗物: ' + id);
+        let ok = false;
+        for (let y = 0; y + d.h <= 4 && !ok; y++) for (let x = 0; x + d.w <= 5 && !ok; x++) {
+          const cells = []; for (let i = x; i < x + d.w; i++) for (let j = y; j < y + d.h; j++) cells.push(j * 5 + i);
+          if (cells.every(c => !used.has(c))) { cells.forEach(c => used.add(c)); grade.push({ chave: id, x, y }); ok = true; }
+        }
+        if (!ok) throw new Error('格子放不下: ' + id);
+      }
+      // 每个房间的「请求」按上限填满：升华和遗物只通过它生效（经验、金币、英雄加成、更多怪）。
+      // 游戏界面进塔时默认就是填满的（存档里的 pedido 等于上限），不传就等于全都不生效。
+      const teto = NS.tetoDoDesafio({ ...s, torre: { ...s.torre, reliquias: grade.map(g => ({ id: g.chave, x: g.x, y: g.y })) } });
+      const nz = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v));
+      const vz = nz(teto.vezes), ms = nz(teto.mais), herois = {};
+      if (Object.keys(vz).length) herois.vezes = vz; if (Object.keys(ms).length) herois.mais = ms;
+      const desafio = { ...(Object.keys(herois).length ? { herois } : {}), ...nz({ xp: teto.xp, ouro: teto.ouro, maisBichos: teto.maisBichos, danoEmChefao: teto.danoEmChefao, niveisDoChefao: p.chefao ? teto.niveisDoChefao : 0 }) };
+      NS.gameIrATorre(s, p.andar, { desafio, ...(grade.length ? { reliquias: grade } : {}) });
     }
     if (!s.torre || !s.torre.aqui) throw new Error('存档不在塔里，需要给 andar');
     NS.gamePilotoDaTorre(s, p.modo || 'subir', p.aoCair || 'recuar');
@@ -203,7 +222,7 @@
       NS.avancarNaTorre(s, 10000);
     }
     const a = s.torre.aqui || {}, xp = s.heroes.map((h, i) => (h.xpDoGrau || 0) - xp0[i]);
-    return { start, fim: [a.andar, a.camada], max: [Math.floor(maxKey / 100), maxKey % 100], salas, quedas, xp: xp.reduce((x, y) => x + y, 0) / xp.length, gold: s.sim.gold - g0, noPreset };
+    return { pedido: a0.pedido, start, fim: [a.andar, a.camada], max: [Math.floor(maxKey / 100), maxKey % 100], salas, quedas, xp: xp.reduce((x, y) => x + y, 0) / xp.length, gold: s.sim.gold - g0, noPreset };
   }
 
   function info() {
