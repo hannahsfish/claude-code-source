@@ -100,6 +100,12 @@
       const rank = c => { const i = o.classes.indexOf(c); return i < 0 ? 99 : i; }; g.heroes = g.heroes.slice().sort((x, y) => rank(x.classId) - rank(y.classId)); },
     set(g, o) { // 通用：{path:['sim','gold'], value:1}
       let t = g; for (const k of o.path.slice(0, -1)) t = t[k]; t[o.path[o.path.length - 1]] = (o.value !== null && typeof o.value === 'object') ? clone(o.value) : o.value; },
+    // 塔宠物（从塔里宝箱的蛋孵出的）：收藏列表 petState.fixados 里的全部生效、效果叠加，没有栏位上限。
+    // {set:[...]} 换成这份列表；{add:[...]} / {drop:[...]} 在现有收藏上加减
+    pets(g, o) { const ps = g.petState = g.petState || {}; let l = o.set ? [...o.set] : [...(ps.fixados || [])];
+      for (const id of o.add || []) if (!l.includes(id)) l.push(id);
+      if (o.drop) l = l.filter(id => !o.drop.includes(id));
+      ps.fixados = l.sort(); },
   };
 
   function patched(ops) {
@@ -113,7 +119,7 @@
   function farm(ops, p) {
     const s = idle(patched(ops)); const [d, a, st] = p.stage; s.difficulty = d; s.act = a; s.stage = st;
     const noPreset = applyPresetAll(s, p.preset);
-    const lv0 = s.heroes.map(h => h.level);
+    const lv0 = s.heroes.map(h => h.level), grau0 = s.heroes.map(h => h.xpDoGrau || 0);
     for (const h of s.heroes) h.xp = 0; s.sim.kills = 1000 + p.seed * 7919;
     const g0 = s.sim.gold, MS = 600000;
     const est = Q.est2(s);   // 有人倒地时引擎会像游戏里一样往回退关，s 的关卡可能已经不是请求的那一关
@@ -128,8 +134,8 @@
     NS.catchUpOffline(s.sim, MS, { ...c, ...hv, killsPerTick: est.abatesPorSegundo * c.msPerTick / 1000, xpPerKill: c.xpPerKill * (1 + est.xpDoExcedente) },
       { capMs: MS, goldEfficiency: 1, xpEfficiency: 1 }, s.heroes);
     const fight = kc / kph * 3600, real = fight + (p.overhead ?? 4), k = fight / real;
-    // 这 10 分钟里升了级的英雄，把跨过的每一级所需经验加回来
-    const xpEach = s.heroes.map((h, i) => { let x = h.xp; for (let L = lv0[i]; L < h.level; L++) x += NS.xpToNext(L); return x * 6 * k; });
+    // 这 10 分钟里升了级的英雄，把跨过的每一级所需经验加回来；满级后经验进升华（xpDoGrau），也算进来
+    const xpEach = s.heroes.map((h, i) => { let x = h.xp + ((h.xpDoGrau || 0) - grau0[i]); for (let L = lv0[i]; L < h.level; L++) x += NS.xpToNext(L); return x * 6 * k; });
     return { xp: xpEach.reduce((x, y) => x + y, 0) / xpEach.length, gold: (s.sim.gold - g0) * 6 * k, kph, fight, down: est.todosDePe && !fell ? 0 : 1, at: fell ? at.join('-') : undefined, noPreset };
   }
 
@@ -172,6 +178,34 @@
     return { problem: r || null, tree: h.treeNodes.length, treeMax: NS.heroTreePointsAvailable({ ...h, treeNodes: [] }), abil: pts, abilMax: NS.abilityPointsAtLevel(h.level) };
   }
 
+  // 塔：用游戏自己的自动爬塔（piloto），只推进时间。
+  // p.andar 不给 = 沿用存档里塔的当前位置；给了就从该层（外围用负数）重新进塔，p.unlock=true 时先把纪录解锁到该层。
+  // 每 10 秒推进一次，记录过了几个房间、倒了几次、倒在哪、最远到哪，以及 1 号英雄的升华经验和金币增量。
+  function tower(ops, p) {
+    const s = patched(ops); delete s.luta; delete s.lutaDaFase; if (s.colosso) delete s.colosso.aqui;
+    const noPreset = applyPresetAll(s, p.preset);
+    s.sim.elapsedMs += (p.seed || 0) * 3600000 * 7;   // 换种子：把时钟往后挪，房间、掉落的随机数跟着变
+    if (p.andar !== undefined && p.andar !== null) {
+      s.torre = s.torre || { recorde: 0 }; delete s.torre.aqui; delete s.torre.pausada;
+      if (p.unlock) { s.torre.recorde = Math.max(s.torre.recorde || 0, p.andar); s.torre.entornoVencido = 95; }
+      const why = NS.porQueNaoVaiATorre(s, p.andar); if (why) throw new Error('塔进不去: ' + why);
+      NS.gameIrATorre(s, p.andar, {});
+    }
+    if (!s.torre || !s.torre.aqui) throw new Error('存档不在塔里，需要给 andar');
+    NS.gamePilotoDaTorre(s, p.modo || 'subir', p.aoCair || 'recuar');
+    const xp0 = s.heroes.map(h => h.xpDoGrau || 0), g0 = s.sim.gold, a0 = s.torre.aqui;
+    const start = [a0.andar, a0.camada], quedas = []; let salas = 0, last = null, maxKey = a0.andar * 100 + a0.camada;
+    for (let ms = 0; ms < p.ms; ms += 10000) {
+      const a = s.torre.aqui; if (!a) break;
+      const k = a.andar + '/' + a.camada + (a.venceu ? 'V' : '') + (a.caiu ? 'X' : '');
+      if (k !== last) { if (a.caiu) quedas.push(a.andar + '/' + a.camada); if (a.venceu) salas++; last = k; }
+      maxKey = Math.max(maxKey, a.andar * 100 + a.camada);
+      NS.avancarNaTorre(s, 10000);
+    }
+    const a = s.torre.aqui || {}, xp = s.heroes.map((h, i) => (h.xpDoGrau || 0) - xp0[i]);
+    return { start, fim: [a.andar, a.camada], max: [Math.floor(maxKey / 100), maxKey % 100], salas, quedas, xp: xp.reduce((x, y) => x + y, 0) / xp.length, gold: s.sim.gold - g0, noPreset };
+  }
+
   function info() {
     const g = window.__g; return {
       engine: NS.GAME_VERSION, save: g.version, heroes: g.heroes.map(h => [h.classId, h.level]), stage: [g.difficulty, g.act, g.stage],
@@ -180,5 +214,5 @@
     };
   }
 
-  window.QS = { farm, col, boss, stats, valid, info, patched, makeItem, huntId };
+  window.QS = { farm, col, boss, stats, valid, tower, info, patched, makeItem, huntId };
 })();

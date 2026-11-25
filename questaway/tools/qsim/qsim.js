@@ -56,6 +56,8 @@ variants.forEach((v, vi) => (job.measures || []).forEach((m, mi) => {
   else if (m.type === 'boss') for (let seed = 1; seed <= (m.n || 10); seed++) tasks.push({ vi, mi, fn: 'boss', ops, p: { act: m.act, seed, preset: m.preset || null }, cost: 0.3 });
   else if (m.type === 'stats') tasks.push({ vi, mi, fn: 'stats', ops, p: { hero: m.hero, keys: m.keys, preset: m.preset || null }, cost: 0.05 });
   else if (m.type === 'valid') tasks.push({ vi, mi, fn: 'valid', ops, p: { hero: m.hero }, cost: 0.05 });
+  else if (m.type === 'tower') for (const andar of (m.andares || [null])) for (let seed = 0; seed < (m.seeds || 4); seed++)
+    tasks.push({ vi, mi, fn: 'tower', ops, p: { andar, seed, unlock: m.unlock, modo: m.modo, aoCair: m.aoCair, ms: m.ms || 3600000, preset: m.preset === undefined ? null : m.preset }, cost: 0.5 * (m.ms || 3600000) / 3600000 });
   else throw new Error('未知测量类型: ' + m.type);
 }));
 for (const t of tasks) { t.key = sha(BASEKEY + t.fn + JSON.stringify(t.ops) + JSON.stringify(t.p)); if (cache.has(t.key)) t.res = cache.get(t.key); }
@@ -113,9 +115,14 @@ const closeCache = () => new Promise(res => { if (!cacheOut || cacheOut.closed |
         const tot = k => by[k].reduce((a, r) => a + r.dano, 0);
         rows.push({ name: v.name, vi, by: new Map(ss.map(k => [+k, tot(k)])), xs: ss.map(tot), quedas: mean(ss.map(k => by[k].reduce((a, r) => a + r.quedas, 0))), lutaMs: ts.length ? ts[0].r.lutaMs : 0 }); }
       else if (m.type === 'boss') rows.push({ name: v.name, vi, wins: ts.reduce((a, t) => a + t.r.win, 0), n: ts.length, dmg: mean(ts.map(t => t.r.dmg)), secs: mean(ts.map(t => t.r.secs)) });
+      else if (m.type === 'tower') { const H = (m.ms || 3600000) / 3600000, q = {};
+        for (const t of ts) for (const w of t.r.quedas) { const f = w.split('/')[0]; q[f] = (q[f] || 0) + 1; }
+        rows.push({ name: v.name, vi, n: ts.length, quedas: ts.reduce((a, t) => a + t.r.quedas.length, 0), fim: mean(ts.map(t => t.r.fim[0] ?? NaN)),
+          max: ts.map(t => t.r.max.join('/')), salas: mean(ts.map(t => t.r.salas)), xph: mean(ts.map(t => t.r.xp)) / H, gph: mean(ts.map(t => t.r.gold)) / H, where: q,
+          xs: ts.map(t => t.r.xp / H), by: new Map(ts.map(t => [`${t.p.andar}|${t.p.seed}`, t.r.xp])) }); }
       else if (m.type === 'stats' || m.type === 'valid') rows.push({ name: v.name, vi, stats: ts[0] ? ts[0].r : {} });
     });
-    const base = rows[0]; const title = m.type === 'farm' ? `刷图 ${m.stage.join('-')}（每人每小时经验，${m.buffs === false ? '不含' : '含'}药水，预设 ${presetOf(m, D.farmPreset) || '当前'}）` : m.type === 'col' ? `巨像（${(m.tipos || []).length || 10} 种合计，强度 ${m.forca ?? D.colForca}，${Math.round((m.dur ?? D.colDur) / 1000)} 秒，同行 ${m.compn ?? D.colCompn} 队，预设 ${presetOf(m, D.colPreset) || '当前'}）` : m.type === 'boss' ? `首领 ${m.act.join('-')}-10` : m.type === 'valid' ? `配法校验 ${m.hero}` : `属性 ${m.hero}`;
+    const base = rows[0]; const title = m.type === 'farm' ? `刷图 ${m.stage.join('-')}（每人每小时经验，${m.buffs === false ? '不含' : '含'}药水，预设 ${presetOf(m, D.farmPreset) || '当前'}）` : m.type === 'col' ? `巨像（${(m.tipos || []).length || 10} 种合计，强度 ${m.forca ?? D.colForca}，${Math.round((m.dur ?? D.colDur) / 1000)} 秒，同行 ${m.compn ?? D.colCompn} 队，预设 ${presetOf(m, D.colPreset) || '当前'}）` : m.type === 'boss' ? `首领 ${m.act.join('-')}-10` : m.type === 'tower' ? `塔（游戏自动爬塔，${m.andares ? m.andares.join('、') + ' 层起' : '存档当前位置起'}，每次 ${Math.round((m.ms || 3600000) / 60000)} 分钟，${m.seeds || 4} 次）` : m.type === 'valid' ? `配法校验 ${m.hero}` : `属性 ${m.hero}`;
     console.log('\n== ' + title);
     if (noPreset.size) console.log(`   （没有这个预设、沿用存档当前配法：${[...noPreset].join('、')}）`);
     if (notes[mi]) console.log(`   （${notes[mi]}）`);
@@ -133,6 +140,12 @@ const closeCache = () => new Promise(res => { if (!cacheOut || cacheOut.closed |
         else line += `   倒地 ${r.quedas.toFixed(0)}`;
         line += lacks(r.vi, mi);
         console.log(line); o.rows.push({ name: r.name, mean: mu, se: e, delta: r === base ? 0 : (dx.length ? d : null), deltaSe: r === base ? 0 : (dx.length > 1 ? de : null), n: r.xs.length, pairs: dx.length, missing: missing(r.vi, mi), gold: m.type === 'farm' ? mean(r.gs) : undefined });
+      } else if (m.type === 'tower') {
+        if (!r.n) { console.log(`${r.name.padEnd(30)} （没有结果）${lacks(r.vi, mi)}`); o.rows.push({ name: r.name, n: 0 }); continue; }
+        const dx = []; for (const [key, x] of r.by) if (base.by.has(key) && base.by.get(key) > 0) dx.push(x / base.by.get(key) - 1);
+        const where = Object.keys(r.where).sort((a, b) => a - b).map(f => `${f}层×${r.where[f]}`).join(' ');
+        console.log(`${r.name.padEnd(30)} 倒地 ${String(r.quedas).padStart(3)}   平均停在 ${r.fim.toFixed(1)} 层   最远 ${r.max.join(' ')}   每人升华经验 ${(r.xph / 1e8).toFixed(2)} 亿/时${r !== base && dx.length ? ' ' + pct(mean(dx)) : ''}   金币 ${(r.gph / 1e6).toFixed(1)}M/时   房间 ${r.salas.toFixed(1)}${where ? '   倒在 ' + where : ''}${lacks(r.vi, mi)}`);
+        o.rows.push({ name: r.name, n: r.n, quedas: r.quedas, fim: r.fim, max: r.max, xpPerHour: r.xph, goldPerHour: r.gph, salas: r.salas, where: r.where, delta: r === base ? 0 : (dx.length ? mean(dx) : null), missing: missing(r.vi, mi) });
       } else if (m.type === 'boss') { console.log(`${r.name.padEnd(30)} 胜 ${r.wins}/${r.n}   打掉 ${(r.dmg * 100).toFixed(1)}%   ${r.secs.toFixed(1)}s${lacks(r.vi, mi)}`); o.rows.push(r); }
       else { console.log(r.name.padEnd(30), JSON.stringify(r.stats) + lacks(r.vi, mi)); o.rows.push(r); }
     }
